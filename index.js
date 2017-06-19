@@ -72,10 +72,7 @@ try {
     }
     manifest.pdf2htmlex_version = version.stderr.toString();
 } catch (err) {
-    return error({
-        code: -1,
-        msg: `checking pdf2htmlEX version error: ${err}`
-    });
+    return error(new InternalError(-1, `checking pdf2htmlEX version error: ${err}`));
 }
 
 // init tmp folders
@@ -88,18 +85,12 @@ try {
     mkdirp.sync(tmp_folder);
     mkdirp.sync(tmp_page_folder);
 } catch (err) {
-    return error({
-        code: -1,
-        msg: `creating tmp folder '${manifest.tmp_folder_path} error: ${err}`
-    });
+    return error(new InternalError(-1, `creating tmp folder '${manifest.tmp_folder_path} error: ${err}`));
 }
 
 // validate input pdf file
 if (!fs.existsSync(manifest.pdf_file_path)) {
-    return error({
-        code: 404,
-        msg: `input pdf file '${manifest.pdf_file_path} does not exists !`
-    });
+    return error(new InternalError(404, `input pdf file '${manifest.pdf_file_path} does not exists !`));
 }
 
 // Run pdf2htmlEX
