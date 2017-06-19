@@ -1,6 +1,8 @@
 const fs = require('fs');
 const path = require('path');
+const Rx = require('rxjs/Rx');
 const mkdirp = require('mkdirp');
+const rimraf = require('rimraf');
 const md5File = require('md5-file')
 const _ = require('lodash');
 const minify = require('html-minifier').minify;
@@ -15,62 +17,85 @@ const readfileOpts = {
 };
 
 const argv = require('yargs')
-    .describe('pdf', 'input pdf file path')
-    .nargs('pdf', 1)
-    .describe('dest', 'destination folder')
-    .nargs('dest', 1)
-    .describe('prefix', 'images and css prefix')
-    .nargs('prefix', 1)
-    .alias('p', 'page')
-    .describe('p', 'page from the manual to generate, if none, the manual will be generated entirely')
-    .nargs('page', 1)
-    .describe('fallback', 'activate fallback for full image html')
-    .boolean('fallback')
-    .default('fallback', false)
-    .demandOption(['pdf', 'dest', 'prefix'])
+    .describe('input', 'input json configuration file')
+    .nargs('input', 1)
+    .demand('input')
     .describe('test', 'generate index.html to test')
     .boolean('test')
-    .count('verbose')
+    .describe('verbose', 'activate log')
     .alias('v', 'verbose')
+    .count('verbose')
     .help('h')
     .alias('h', 'help')
     .argv;
 
-const pdf_file = argv.pdf.startsWith('/') ? argv.pdf : path.join(__dirname, argv.pdf);
-
-// dest folder
-const dest_folder = argv.dest.startsWith('/') ? argv.dest : path.join(__dirname, argv.dest);
-if (!fs.existsSync(dest_folder)) {
-    // TODO error
-    console.error(`dest folder '${dest_folder} does not exists !`);
+let config;
+try {
+    config = require(argv.input);
+} catch (err) {
+    console.error(err);
     process.exit(404);
 }
 
-// tmp build folder
-const tmp_folder = path.join(dest_folder, '.tmp');
-mkdirp.sync(tmp_folder);
+// validate dest folder
+if (!fs.existsSync(config.textbook_folder_path)) {
+    console.error(`dest folder '${config.textbook_folder_path} does not exists !`);
+    process.exit(404);
+}
 
-// tmp page folder
+// init manifest
+const manifest = _.cloneDeep(config);
+manifest.warnings = [];
+manifest.tmp_folder_path = path.join(config.textbook_folder_path, '.tmp');
+try {
+    const version = require('child_process').spawnSync('pdf2htmlEX', ['--version']);
+    if (version.status !== 0) {
+        return error({
+            code: version.status,
+            msg: {
+                error: version.error,
+                stderr: version.stderr
+            }
+        });
+    }
+    manifest.pdf2htmlex_version = version.stderr.toString();
+} catch (err) {
+    return error({
+        code: -1,
+        msg: `checking pdf2htmlEX version error: ${err}`
+    });
+}
+
+// init tmp folders
+const tmp_folder = manifest.tmp_folder_path;
 const tmp_page_folder = path.join(tmp_folder, 'pages');
-mkdirp.sync(tmp_page_folder);
-
-const manual_filename = 'manual.html';
-const manual_filepath = pdf_file;
-
 const css_filename = 'manual.css';
 const css_filepath = path.join(tmp_folder, css_filename);
+try {
+    if (fs.existsSync(tmp_folder)) rimraf.sync(tmp_folder);
+    mkdirp.sync(tmp_folder);
+    mkdirp.sync(tmp_page_folder);
+} catch (err) {
+    return error({
+        code: -1,
+        msg: `creating tmp folder '${manifest.tmp_folder_path} error: ${err}`
+    });
+}
 
-const manual_folder = path.join(dest_folder, 'manual');
-mkdirp.sync(manual_folder);
+// validate input pdf file
+if (!fs.existsSync(config.pdf_file_path)) {
+    return error({
+        code: 404,
+        msg: `input pdf file '${config.pdf_file_path} does not exists !`
+    });
+}
 
-const thumbnail_folder = path.join(dest_folder, 'thumbnails');
-mkdirp.sync(thumbnail_folder);
-
+// Run pdf2htmlEX
 function convertPDF(cb) {
-    log('##### convert PDF #####');
+    const spawn = require('child_process').spawn;
     const cmd = 'pdf2htmlEX'
     let options = [
-        '--fallback', argv.fallback ? 1 : 0,
+        '--fallback', config.use_fallback === true ? 1 : 0,
         '--bg-format', 'svg',
         '--debug', argv.verbose > 1 ? 1 : 0,
         '--optimize-text', 1,
@@ -88,108 +113,153 @@ function convertPDF(cb) {
         '--css-filename', css_filename,
         '--page-filename', 'pages/page-%d.html',
         `--dest-dir`, tmp_folder,
-        manual_filepath,
-        manual_filename
+        config.pdf_file_path
     ];
-    if (argv.page) {
-        options = ['-f', argv.page, '-l', argv.page].concat(options);
+    if (config.page_number !== undefined) {
+        options = ['-f', config.page_number, '-l', config.page_number].concat(options);
     }
-    run(cmd, options, cb);
-}
-
-function generateThumbnail(cb) {
-    log('##### generate Thumbnail #####');
-    const cmd = 'convert';
-    const options = [
-        '-monitor',
-        argv.page ? `${pdf_file}[${argv.page}]` : pdf_file,
-        argv.page ? `${thumbnail_folder}/page-${argv.page}.png` : `${thumbnail_folder}/page.png`
-    ];
-    run(cmd, options, cb);
-}
-
-function run(cmd, options, next) {
-    const spawn = require('child_process').spawn;
     const convert = spawn(cmd, options);
     if (argv.verbose > 0) {
         convert.stdout.on('data', data => process.stdout.write(data));
         convert.stderr.on('data', data => process.stderr.write(data));
     }
-    convert.on('close', code => next(code === 0 ? undefined : code));
+    convert.on('close', code => cb(code === 0 ? undefined : code));
 }
 
-function optimizeHTML() {
-    log('##### optimize HTML #####');
-    const assets = processAssets();
-    log('load css file');
-    const cssfile = css.parse(fs.readFileSync(css_filepath, readfileOpts));
-    const pages = loadPages(assets, cssfile);
-    log('write html and css pages');
-    const test_includes = [];
-    const test_pages = [];
-    pages.map((page) => {
-        fs.writeFileSync(path.join(manual_folder, page.file), page.content, options);
-        fs.writeFileSync(path.join(manual_folder, page.css_file), cleanup.minify(css.stringify(page.css, options)).styles, options);
-        if (argv.test) {
-            test_pages.push(`<div>${page.content}</div>`);
-            test_includes.push(`<link href="${manual_folder}/${page.css_file}" rel="stylesheet" type="text/css">`);
-        }
-    });
-    if (argv.test) {
-        writeTest(test_includes, test_pages);
-    }
-    writeManifest(assets, pages);
-
-}
-
-function processAssets() {
-    var processed = {
-        svg: {},
-        fonts: {}
-    };
-    fs.readdirSync(tmp_folder).forEach(asset => {
-        if (asset.endsWith('.svg')) {
-            log(`process asset ${asset}`);
-            processed.svg[asset] = {
-                filename: asset,
-                filepath: path.join(manual_folder, asset)
-            };
-            fs.createReadStream(path.join(tmp_folder, asset))
-                .pipe(fs.createWriteStream(path.join(manual_folder, asset)));
-        } else if (asset.endsWith('.woff')) {
-            log(`process asset ${asset}`);
-            const filename = `${md5File.sync(path.join(tmp_folder, asset))}.woff`;
-            processed.fonts[asset] = {
-                filename: filename,
-                filepath: path.join(manual_folder, filename)
-            };
-            fs.createReadStream(path.join(tmp_folder, asset))
-                .pipe(fs.createWriteStream(path.join(manual_folder, filename)));
-        }
-    });
-    return processed;
-}
-
-function loadPages(assets, cssfile) {
-    log('load page files');
-    const pages = [];
-    fs.readdirSync(tmp_page_folder).forEach(file => {
-        const page_number = getPageNumber(file);
-        const content = minify(fs.readFileSync(path.join(tmp_page_folder, file), readfileOpts));
-        const id = getId(content);
-        const classes = getClasses(content);
-        log(`process page ${id} content`);
-        pages.push({
-            page_number,
-            file,
-            id,
-            content: minify(updateHtml(assets, content)),
-            css_file: file.replace(/\.html$/i, '.css'),
-            classes,
-            css: buildPageCss(assets, cssfile, id, classes)
+function processFonts() {
+    return Rx.Observable.create(function (observer) {
+        const fonts = {};
+        const duplicates = [];
+        fs.readdir(tmp_folder, (err, files) => {
+            if (err) return observer.error(err);
+            const promises = [];
+            files.forEach(file => {
+                if (!file.endsWith('.woff')) return;
+                log(`process font ${file}`);
+                const font = buildFont(file);
+                fonts[file] = font;
+                if (fs.existsSync(font.file_path)) duplicates.push(font.file_name);
+                promises.push(new Promise((resolve, reject) => {
+                    const wstream = fs.createWriteStream(font.file_path);
+                    fs.createReadStream(path.join(tmp_folder, file)).pipe(wstream);
+                    wstream.on('finish', resolve);
+                    wstream.on('error', reject);
+                }));
+            });
+            observer.next(fonts);
+            promises.push(addDup2Manifest(duplicates, fonts));
+            Promise.all(promises).then(() => observer.complete(), err => observer.error(err));
         });
     });
+}
+
+function buildFont(font) {
+    const file_name = `${md5File.sync(path.join(tmp_folder, font))}.woff`;
+    const file_path = path.join(config.textbook_fonts_folder_path, file_name);
+    return {
+        file_name,
+        file_path,
+        url: path.join(config.prefix, 'fonts', file_name)
+    };
+}
+
+function addDup2Manifest(duplicates, fonts) {
+    return new Promise((resolve) => {
+        duplicates.forEach(d => {
+            const occ = [];
+            for (var prop in fonts) {
+                if (Object.prototype.hasOwnProperty.call(fonts, prop)) {
+                    if (fonts[prop].file_name === d) {
+                        occ.push(prop); // TODO check diff
+                    }
+                }
+            }
+            manifest.warnings.push({
+                error: 'duplicate font',
+                d,
+                fonts: occ
+            });
+        });
+        resolve();
+    });
+}
+
+function processHtml(fonts) { // TODO make it async for perf
+    try {
+        const cssfile = css.parse(fs.readFileSync(css_filepath, readfileOpts));
+        const pages = loadPages(fonts, cssfile);
+        const test_includes = [];
+        const test_pages = [];
+        for (let i = 0; i < pages.length; ++i) {
+            const page = pages[i];
+            fs.writeFileSync(page.html_file_path, page.html, options);
+            fs.writeFileSync(page.css_file_path, cleanup.minify(css.stringify(page.css, options)).styles, options);
+            if (argv.test) {
+                test_pages.push(`<div>${page.html}</div>`);
+                test_includes.push(`<link href="${page.css_file_path}" rel="stylesheet" type="text/css">`);
+            }
+        }
+        if (argv.test) writeTest(test_includes, test_pages);
+        return Promise.resolve();
+    } catch (err) {
+        return Promise.reject(err);
+    }
+}
+
+function loadPages(fonts, cssfile) {
+    const pages = [];
+    const files = fs.readdirSync(tmp_page_folder);
+    for (let i = 0; i < files.length; ++i) {
+        const page = loadPage(fonts, cssfile, files[i]);
+        pages.push(page);
+    }
     return pages;
+}
+
+function loadPage(fonts, cssfile, page_file) {
+    const page_number = getPageNumber(page_file);
+    const config_page = getPageConfig(page_number);
+    const html = minify(fs.readFileSync(path.join(tmp_page_folder, page_file), readfileOpts));
+    const page_id = getId(html);
+    const html_file_path = path.join(config_page.page_folder_path, `${config_page.id}.html`);
+    const css_file = page_file.replace(/\.html$/i, '.css');
+    const classes = getClasses(html);
+    const css_file_path = path.join(config_page.page_folder_path, `${config_page.id}.css`);
+    log(`process page ${page_id} content`);
+    return {
+        page_id,
+        page_number,
+        page_file,
+        html: minify(processImages(config_page, html)),
+        html_file_path,
+        css_file,
+        classes,
+        css: buildPageCss(fonts, cssfile, page_id, classes),
+        css_file_path
+    };
+}
+
+function getPageConfig(page_number) {
+    const config_page = config.pages.find(page => page.number === page_number);
+    if (!config_page) {
+        throw {
+            code: 404,
+            msg: `no config found for page ${page_number}`
+        };
+    }
+    if (!fs.existsSync(config_page.page_folder_path)) {
+        throw {
+            code: 404,
+            message: `page folder '${config_page.page_folder_path} does not exists !`
+        };
+    }
+    if (!fs.existsSync(config_page.page_image_folder_path)) {
+        throw {
+            code: 404,
+            message: `page image folder '${config_page.page_image_folder_path} does not exists !`
+        };
+    }
+    return config_page;
 }
 
 function getPageNumber(file) {
@@ -215,14 +285,20 @@ function getClasses(content) {
     return classes;
 }
 
-function updateHtml(assets, content) {
-    content = content.replace(/"([a-zA-Z0-9]+\.svg)"/g, (match, svg) => {
-        return `"${argv.prefix}/${assets.svg[svg].filename}"`;
+function processImages(config_page, html) {
+    let index = 0;
+    html = html.replace(/"([a-zA-Z0-9]+\.svg)"/g, (match, svg) => {
+        const file_name = `${config_page.id}-${++index}.svg`;
+        const file_path = path.join(config_page.page_image_folder_path, file_name);
+        fs.createReadStream(path.join(tmp_folder, svg))
+            .pipe(fs.createWriteStream(file_path));
+        const url = path.join(config.prefix, 'pages', config_page.id, 'images', file_name);
+        return `"${url}"`;
     });
-    return content;
+    return html;
 }
 
-function buildPageCss(assets, cssfile, id, classes) {
+function buildPageCss(fonts, cssfile, id, classes) {
     const cssrules = {
         stylesheet: {
             rules: []
@@ -231,32 +307,40 @@ function buildPageCss(assets, cssfile, id, classes) {
     for (let i = 0; i < cssfile.stylesheet.rules.length; ++i) {
         const rule = cssfile.stylesheet.rules[i];
         if (rule.type === 'rule' && rule.selectors.length === 1) {
-            const selector = rule.selectors[0];
-            const selectors = [];
-            if (classes.has(selector.substring(1))) {
-                if (selector === 'pf' || selector.match(/[wh][0-9]+/g)) {
-                    selectors.push(`#pf${id}${selector}`);
-                }
-                selectors.push(`#pf${id} ${selector}`);
-            }
-            if (selectors.length > 0) {
-                const page_rule = _.cloneDeep(rule);
-                page_rule.selectors = selectors;
-                cssrules.stylesheet.rules.push(page_rule);
-            }
+            buildPageCssRule(id, classes, cssrules, rule);
         } else if (rule.type === 'font-face') {
-            const name = rule.declarations.filter(d => d.property === 'font-family')[0].value;
-            if (classes.has(name)) {
-                const page_rule = _.cloneDeep(rule);
-                const src = page_rule.declarations.filter(d => d.property === 'src')[0];
-                src.value = src.value.replace(/url\(([^)]+)\)/i, (match, font) => {
-                    return `url(${argv.prefix}/${assets.fonts[font].filename})`;
-                });
-                cssrules.stylesheet.rules.push(page_rule);
-            }
+            buildPageCssFontFace(fonts, classes, cssrules, rule);
         }
     }
     return cssrules;
+}
+
+function buildPageCssRule(id, classes, cssrules, rule) {
+    const selector = rule.selectors[0];
+    const selectors = [];
+    if (classes.has(selector.substring(1))) {
+        if (selector === 'pf' || selector.match(/[wh][0-9]+/g)) {
+            selectors.push(`#pf${id}${selector}`);
+        }
+        selectors.push(`#pf${id} ${selector}`);
+    }
+    if (selectors.length > 0) {
+        const page_rule = _.cloneDeep(rule);
+        page_rule.selectors = selectors;
+        cssrules.stylesheet.rules.push(page_rule);
+    }
+}
+
+function buildPageCssFontFace(fonts, classes, cssrules, rule) {
+    const name = rule.declarations.filter(d => d.property === 'font-family')[0].value;
+    if (classes.has(name)) {
+        const page_rule = _.cloneDeep(rule);
+        const src = page_rule.declarations.filter(d => d.property === 'src')[0];
+        src.value = src.value.replace(/url\(([^)]+)\)/i, (match, font) => {
+            return `url(${fonts[font].url})`;
+        });
+        cssrules.stylesheet.rules.push(page_rule);
+    }
 }
 
 function log() {
@@ -266,8 +350,7 @@ function log() {
 }
 
 function writeTest(styles, pages) {
-    log('##### write test file #####');
-    const test = fs.createWriteStream(path.join(dest_folder, 'index.html'));
+    const test = fs.createWriteStream(path.join(tmp_folder, 'index.html'));
     test.write(`<html><head><meta charset="utf-8"/>`);
     test.write(`<link rel="stylesheet" href="${tmp_folder}/base.min.css"/>`);
     test.write(`<link rel="stylesheet" href="${tmp_folder}/fancy.min.css"/>`);
@@ -277,45 +360,55 @@ function writeTest(styles, pages) {
     test.end('</body></html>');
 }
 
-function writeManifest(assets, pages) {
-    log('##### write manifest file #####');
-    const manifestStream = fs.createWriteStream(path.join(dest_folder, 'manifest.json'));
-    const manifest = {
-        images: Object.keys(assets.svg).map(key => assets.svg[key].filepath),
-        fonts: Object.keys(assets.fonts).map(key => assets.fonts[key].filepath),
-        pages: pages.map(page => {
-            return {
-                html: path.join(manual_folder, page.file),
-                css: path.join(manual_folder, page.css_file)
-            }
-        })
-    };
+function writeManifest(cb) {
+    log('write manifest');
+    manifest.created_at = new Date();
+    const manifestStream = fs.createWriteStream(config.manifest_file_path);
+    cb = cb || ((err) => {
+        if (err) console.error(err);
+    });
+    manifestStream.on('finish', cb);
+    manifestStream.on('error', cb);
     manifestStream.end(JSON.stringify(manifest, null, '  '));
 }
 
-let convertPDFDone = false;
-let generateThumbnailDone = false;
+function error(err) {
+    let code, msg;
+    if (err instanceof Error) {
+        code = -1, msg = err.toString();
+    } else {
+        code = err.code || -1, msg = err.msg;
+    }
+    console.error(msg);
+    manifest.exit_code = code || -1;
+    manifest.error_message = msg;
+    writeManifest(() => {
+        process.exit(code);
+    });
+}
 
-generateThumbnail((err) => {
-    if (err) {
-        console.error(err);
-        return process.exit(-1);
-    }
-    generateThumbnailDone = true;
-    if (convertPDFDone) {
-        optimizeHTML();
-    }
-});
+let fontsDone = false;
+let htmlDone = false;
+
+function done() {
+    if (fontsDone && htmlDone) writeManifest();
+}
 
 convertPDF((err) => {
-    if (err) {
-        console.error(err);
-        return process.exit(-1);
-    }
-    convertPDFDone = true;
-    if (generateThumbnailDone) {
-        optimizeHTML();
-    }
+    if (err) return error(err);
+    processFonts().subscribe(
+        fonts => {
+            processHtml(fonts).then(
+                () => {
+                    log('all html are processed');
+                    htmlDone = true;
+                    done();
+                }, err => error(err));
+        },
+        err => error(err),
+        () => {
+            log('all fonts are processed');
+            fontsDone = true;
+            done();
+        });
 });
-
-// optimizeHTML();
