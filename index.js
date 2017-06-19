@@ -7,14 +7,26 @@ const md5File = require('md5-file')
 const _ = require('lodash');
 const minify = require('html-minifier').minify;
 const CleanCSS = require('clean-css');
-const options = {
+const cssOpts = {
     level: 2
 };
-const cleanup = new CleanCSS(options);
+const cleanup = new CleanCSS(cssOpts);
 const css = require('css');
 const readfileOpts = {
     encoding: 'utf8'
 };
+const writeFileOpts = {
+    encoding: 'utf8'
+}
+
+class InternalError extends Error {
+
+    constructor(code, msg) {
+        super(msg);
+        this.code = code;
+    }
+
+}
 
 const argv = require('yargs')
     .describe('input', 'input json configuration file')
@@ -139,12 +151,7 @@ function processFonts() {
                 const font = buildFont(file);
                 fonts[file] = font;
                 if (fs.existsSync(font.file_path)) duplicates.push(font.file_name);
-                promises.push(new Promise((resolve, reject) => {
-                    const wstream = fs.createWriteStream(font.file_path);
-                    fs.createReadStream(path.join(tmp_folder, file)).pipe(wstream);
-                    wstream.on('finish', resolve);
-                    wstream.on('error', reject);
-                }));
+                promises.push(copyFile(path.join(tmp_folder, file), font.file_path));
             });
             observer.next(fonts);
             promises.push(addDup2Manifest(duplicates, fonts));
@@ -184,90 +191,69 @@ function addDup2Manifest(duplicates, fonts) {
     });
 }
 
-function processHtml(fonts) { // TODO make it async for perf
-    try {
-        const cssfile = css.parse(fs.readFileSync(css_filepath, readfileOpts));
-        const pages = loadPages(fonts, cssfile);
-        const test_includes = [];
-        const test_pages = [];
-        for (let i = 0; i < pages.length; ++i) {
-            const page = pages[i];
-            fs.writeFileSync(page.html_file_path, page.html, options);
-            fs.writeFileSync(page.css_file_path, cleanup.minify(css.stringify(page.css, options)).styles, options);
-            page.config_page.processed = true;
-            if (argv.test) {
-                test_pages.push(`<div>${page.html}</div>`);
-                test_includes.push(`<link href="${page.css_file_path}" rel="stylesheet" type="text/css">`);
-            }
+function processHtml(fonts) {
+    return readFile(css_filepath).then(data => {
+        let cssfile;
+        try {
+            cssfile = css.parse(data);
+        } catch (err) {
+            return Promise.reject(err);
         }
-        if (argv.test) writeTest(test_includes, test_pages);
-        return Promise.resolve();
-    } catch (err) {
-        return Promise.reject(err);
-    }
-}
-
-function loadPages(fonts, cssfile) {
-    const pages = [];
-    const files = fs.readdirSync(tmp_page_folder);
-    if (files.length !== manifest.pages.length) {
-        manifest.warnings.push({
-            error: 'mismatch number of pages',
-            msg: files.length > manifest.pages.length ? 'more pages are generated than declared' : 'more pages are declared than generated',
-            nb_declared_pages: manifest.pages.length,
-            nb_generated_pages: files.length
+        return processPages(fonts, cssfile).then(pages => {
+            if (argv.test) writeTest(pages);
         });
-    }
-    for (let i = 0; i < files.length; ++i) {
-        const page = loadPage(fonts, cssfile, files[i]);
-        pages.push(page);
-    }
-    return pages;
+    });
 }
 
-function loadPage(fonts, cssfile, page_file) {
-    const page_number = getPageNumber(page_file);
-    const config_page = getPageConfig(page_number);
-    const html = minify(fs.readFileSync(path.join(tmp_page_folder, page_file), readfileOpts));
-    const page_id = getId(html);
-    const html_file_path = path.join(config_page.page_folder_path, `${config_page.id}.html`);
-    const css_file = page_file.replace(/\.html$/i, '.css');
-    const classes = getClasses(html);
-    const css_file_path = path.join(config_page.page_folder_path, `${config_page.id}.css`);
-    log(`process page ${page_id} content`);
-    return {
-        page_id,
-        page_number,
-        page_file,
-        html: minify(processImages(config_page, html)),
-        html_file_path,
-        css_file,
-        classes,
-        css: buildPageCss(fonts, cssfile, page_id, classes),
-        css_file_path,
-        config_page
-    };
+function processPages(fonts, cssfile) {
+    return readDir(tmp_page_folder).then(files => {
+        if (files.length !== manifest.pages.length) {
+            manifest.warnings.push({
+                error: 'mismatch number of pages',
+                msg: files.length > manifest.pages.length ?
+                    'more pages are generated than declared' : 'more pages are declared than generated',
+                nb_declared_pages: manifest.pages.length,
+                nb_generated_pages: files.length
+            });
+        }
+        const promises = [];
+        files.forEach(file => promises.push(processPage(fonts, cssfile, file)));
+        return Promise.all(promises);
+    });
+}
+
+function processPage(fonts, cssfile, page_file) {
+    return readFile(path.join(tmp_page_folder, page_file)).then(data => {
+        const html = minify(data);
+        const page_number = getPageNumber(page_file);
+        const config_page = getPageConfig(page_number);
+        if (config_page instanceof InternalError) return Promise.reject(config_page);
+        const page_id = getId(html);
+        const html_file_path = path.join(config_page.page_folder_path, `${config_page.id}.html`);
+        const classes = getClasses(html);
+        const css_file_path = path.join(config_page.page_folder_path, `${config_page.id}.css`);
+        log(`process page ${page_id} content`);
+        try {
+            return Promise.all([
+                writeFile(html_file_path, minify(processImages(config_page, html))),
+                writeFile(css_file_path, cleanup.minify(css.stringify(buildPageCss(fonts, cssfile, page_id, classes), cssOpts)).styles)
+            ]).then(() => config_page.processed = true);
+        } catch (err) {
+            return Promise.reject(err);
+        }
+    });
 }
 
 function getPageConfig(page_number) {
     const config_page = manifest.pages.find(page => page.number === page_number);
     if (!config_page) {
-        throw {
-            code: 404,
-            msg: `no config found for page ${page_number}`
-        };
+        return InternalError(404, `no config found for page ${page_number}`);
     }
     if (!fs.existsSync(config_page.page_folder_path)) {
-        throw {
-            code: 404,
-            message: `page folder '${config_page.page_folder_path} does not exists !`
-        };
+        return InternalError(404, `page folder '${config_page.page_folder_path} does not exists !`);
     }
     if (!fs.existsSync(config_page.page_image_folder_path)) {
-        throw {
-            code: 404,
-            message: `page image folder '${config_page.page_image_folder_path} does not exists !`
-        };
+        return InternalError(404, `page image folder '${config_page.page_image_folder_path} does not exists !`);
     }
     return config_page;
 }
@@ -359,14 +345,21 @@ function log() {
     }
 }
 
-function writeTest(styles, pages) {
+function writeTest(pages) {
+    const test_includes = [];
+    const test_pages = [];
+    for (let i = 0; i < pages.length; ++i) {
+        const page = pages[i];
+        test_pages.push(`<div>${page.html}</div>`);
+        test_includes.push(`<link href="${page.css_file_path}" rel="stylesheet" type="text/css">`);
+    }
     const test = fs.createWriteStream(path.join(tmp_folder, 'index.html'));
     test.write(`<html><head><meta charset="utf-8"/>`);
     test.write(`<link rel="stylesheet" href="${tmp_folder}/base.min.css"/>`);
     test.write(`<link rel="stylesheet" href="${tmp_folder}/fancy.min.css"/>`);
-    styles.forEach(style => test.write(style));
+    test_includes.forEach(style => test.write(style));
     test.write('</head><body>');
-    pages.forEach(page => test.write(page));
+    test_pages.forEach(page => test.write(page));
     test.end('</body></html>');
 }
 
@@ -382,12 +375,64 @@ function writeManifest(cb) {
     manifestStream.end(JSON.stringify(manifest, null, '  '));
 }
 
+function readDir(dir_path) {
+    return new Promise((resolve, reject) => {
+        try {
+            fs.readdir(dir_path, (err, files) => {
+                if (err) return reject(err);
+                resolve(files);
+            });
+        } catch (err) {
+            reject(err);
+        }
+    });
+}
+
+function readFile(file_path) {
+    return new Promise((resolve, reject) => {
+        try {
+            fs.readFile(file_path, readfileOpts, (err, data) => {
+                if (err) return reject(err);
+                resolve(data);
+            });
+        } catch (err) {
+            reject(err);
+        }
+    });
+}
+
+function writeFile(file_path, data) {
+    return new Promise((resolve, reject) => {
+        try {
+            fs.writeFile(file_path, data, writeFileOpts, (err) => {
+                if (err) return reject(err);
+                resolve();
+            });
+        } catch (err) {
+            reject(err);
+        }
+    });
+}
+
+function copyFile(file_path_src, file_path_dest) {
+    return new Promise((resolve, reject) => {
+        try {
+            const wstream = fs.createWriteStream(file_path_dest);
+            fs.createReadStream(file_path_src).pipe(wstream);
+            wstream.on('finish', resolve);
+            wstream.on('error', reject);
+        } catch (err) {
+            reject(err);
+        }
+    })
+}
+
 function error(err) {
     let code, msg;
-    if (err instanceof Error) {
-        code = -1, msg = err.toString();
-    } else {
-        code = err.code || -1, msg = err.msg;
+    if (err instanceof InternalError) {
+        code = err.code, msg = err.message;
+    } else if (err) {
+        code = -1, msg = err.toStirng();
     }
     console.error(msg);
     manifest.exit_code = code || -1;
