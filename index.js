@@ -239,13 +239,13 @@ function processPage(fonts, cssfile, page_file) {
 function getPageConfig(page_number) {
     const config_page = manifest.pages.find(page => page.number === page_number);
     if (!config_page) {
-        return InternalError(404, `no config found for page ${page_number}`);
+        return new InternalError(404, `no config found for page ${page_number}`);
     }
     if (!fs.existsSync(config_page.page_folder_path)) {
-        return InternalError(404, `page folder '${config_page.page_folder_path} does not exists !`);
+        return new InternalError(404, `page folder '${config_page.page_folder_path} does not exists !`);
     }
     if (!fs.existsSync(config_page.page_image_folder_path)) {
-        return InternalError(404, `page image folder '${config_page.page_image_folder_path} does not exists !`);
+        return new InternalError(404, `page image folder '${config_page.page_image_folder_path} does not exists !`);
     }
     return config_page;
 }
@@ -424,7 +424,7 @@ function error(err) {
     if (err instanceof InternalError) {
         code = err.code, msg = err.message;
     } else if (err) {
-        code = -1, msg = err.toStirng();
+        code = -1, msg = err.message;
     }
     console.error(msg);
     manifest.exit_code = code || -1;
