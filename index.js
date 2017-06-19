@@ -46,7 +46,7 @@ if (!fs.existsSync(config.textbook_folder_path)) {
 // init manifest
 const manifest = _.cloneDeep(config);
 manifest.warnings = [];
-manifest.tmp_folder_path = path.join(config.textbook_folder_path, '.tmp');
+manifest.tmp_folder_path = path.join(manifest.textbook_folder_path, '.tmp');
 try {
     const version = require('child_process').spawnSync('pdf2htmlEX', ['--version']);
     if (version.status !== 0) {
@@ -83,10 +83,10 @@ try {
 }
 
 // validate input pdf file
-if (!fs.existsSync(config.pdf_file_path)) {
+if (!fs.existsSync(manifest.pdf_file_path)) {
     return error({
         code: 404,
-        msg: `input pdf file '${config.pdf_file_path} does not exists !`
+        msg: `input pdf file '${manifest.pdf_file_path} does not exists !`
     });
 }
 
@@ -95,7 +95,7 @@ function convertPDF(cb) {
     const spawn = require('child_process').spawn;
     const cmd = 'pdf2htmlEX'
     let options = [
-        '--fallback', config.use_fallback === true ? 1 : 0,
+        '--fallback', manifest.use_fallback === true ? 1 : 0,
         '--bg-format', 'svg',
         '--debug', argv.verbose > 1 ? 1 : 0,
         '--optimize-text', 1,
@@ -113,10 +113,10 @@ function convertPDF(cb) {
         '--css-filename', css_filename,
         '--page-filename', 'pages/page-%d.html',
         `--dest-dir`, tmp_folder,
-        config.pdf_file_path
+        manifest.pdf_file_path
     ];
-    if (config.page_number !== undefined) {
-        options = ['-f', config.page_number, '-l', config.page_number].concat(options);
+    if (manifest.page_number !== undefined) {
+        options = ['-f', manifest.page_number, '-l', manifest.page_number].concat(options);
     }
     const convert = spawn(cmd, options);
     if (argv.verbose > 0) {
@@ -155,11 +155,11 @@ function processFonts() {
 
 function buildFont(font) {
     const file_name = `${md5File.sync(path.join(tmp_folder, font))}.woff`;
-    const file_path = path.join(config.textbook_fonts_folder_path, file_name);
+    const file_path = path.join(manifest.textbook_fonts_folder_path, file_name);
     return {
         file_name,
         file_path,
-        url: path.join(config.prefix, 'fonts', file_name)
+        url: path.join(manifest.prefix, 'fonts', file_name)
     };
 }
 
@@ -194,6 +194,7 @@ function processHtml(fonts) { // TODO make it async for perf
             const page = pages[i];
             fs.writeFileSync(page.html_file_path, page.html, options);
             fs.writeFileSync(page.css_file_path, cleanup.minify(css.stringify(page.css, options)).styles, options);
+            page.config_page.processed = true;
             if (argv.test) {
                 test_pages.push(`<div>${page.html}</div>`);
                 test_includes.push(`<link href="${page.css_file_path}" rel="stylesheet" type="text/css">`);
@@ -209,6 +210,14 @@ function processHtml(fonts) { // TODO make it async for perf
 function loadPages(fonts, cssfile) {
     const pages = [];
     const files = fs.readdirSync(tmp_page_folder);
+    if (files.length !== manifest.pages.length) {
+        manifest.warnings.push({
+            error: 'mismatch number of pages',
+            msg: files.length > manifest.pages.length ? 'more pages are generated than declared' : 'more pages are declared than generated',
+            nb_declared_pages: manifest.pages.length,
+            nb_generated_pages: files.length
+        });
+    }
     for (let i = 0; i < files.length; ++i) {
         const page = loadPage(fonts, cssfile, files[i]);
         pages.push(page);
@@ -235,12 +244,13 @@ function loadPage(fonts, cssfile, page_file) {
         css_file,
         classes,
         css: buildPageCss(fonts, cssfile, page_id, classes),
-        css_file_path
+        css_file_path,
+        config_page
     };
 }
 
 function getPageConfig(page_number) {
-    const config_page = config.pages.find(page => page.number === page_number);
+    const config_page = manifest.pages.find(page => page.number === page_number);
     if (!config_page) {
         throw {
             code: 404,
@@ -292,7 +302,7 @@ function processImages(config_page, html) {
         const file_path = path.join(config_page.page_image_folder_path, file_name);
         fs.createReadStream(path.join(tmp_folder, svg))
             .pipe(fs.createWriteStream(file_path));
-        const url = path.join(config.prefix, 'pages', config_page.id, 'images', file_name);
+        const url = path.join(manifest.prefix, 'pages', config_page.id, 'images', file_name);
         return `"${url}"`;
     });
     return html;
@@ -363,7 +373,7 @@ function writeTest(styles, pages) {
 function writeManifest(cb) {
     log('write manifest');
     manifest.created_at = new Date();
-    const manifestStream = fs.createWriteStream(config.manifest_file_path);
+    const manifestStream = fs.createWriteStream(manifest.manifest_file_path);
     cb = cb || ((err) => {
         if (err) console.error(err);
     });
