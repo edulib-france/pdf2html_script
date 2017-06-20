@@ -208,28 +208,38 @@ function processPages(fonts, cssfile) {
                 nb_generated_pages: files.length
             });
         }
+        const pages = [];
         const promises = [];
-        files.forEach(file => promises.push(processPage(fonts, cssfile, file)));
-        return Promise.all(promises);
+        files.forEach(file => promises.push(processPage(fonts, cssfile, file)
+            .then(page => pages.push(page))));
+        return Promise.all(promises).then(() => pages);
     });
 }
 
 function processPage(fonts, cssfile, page_file) {
     return readFile(path.join(tmp_page_folder, page_file)).then(data => {
-        const html = minify(data);
         const page_number = getPageNumber(page_file);
         const config_page = getPageConfig(page_number);
         if (config_page instanceof InternalError) return Promise.reject(config_page);
+        const html = minify(processImages(config_page, minify(data)));
         const page_id = getId(html);
         const html_file_path = path.join(config_page.page_folder_path, `${config_page.id}.html`);
         const classes = getClasses(html);
         const css_file_path = path.join(config_page.page_folder_path, `${config_page.id}.css`);
+        const styles = cleanup.minify(css.stringify(buildPageCss(fonts, cssfile, page_id, classes), cssOpts)).styles;
         log(`process page ${page_id} content`);
         try {
             return Promise.all([
-                writeFile(html_file_path, minify(processImages(config_page, html))),
-                writeFile(css_file_path, cleanup.minify(css.stringify(buildPageCss(fonts, cssfile, page_id, classes), cssOpts)).styles)
-            ]).then(() => config_page.processed = true);
+                writeFile(html_file_path, html),
+                writeFile(css_file_path, styles)
+            ]).then(() => {
+                config_page.processed = true;
+                return {
+                    page_number,
+                    html,
+                    css_file_path
+                };
+            });
         } catch (err) {
             return Promise.reject(err);
         }
@@ -340,6 +350,7 @@ function log() {
 function writeTest(pages) {
     const test_includes = [];
     const test_pages = [];
+    pages.sort((a, b) => a.page_number - b.page_number);
     for (let i = 0; i < pages.length; ++i) {
         const page = pages[i];
         test_pages.push(`<div>${page.html}</div>`);
