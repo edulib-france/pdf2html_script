@@ -122,6 +122,7 @@ function convertPDF(cb) {
     if (manifest.page_number !== undefined) {
         options = ['-f', manifest.page_number, '-l', manifest.page_number].concat(options);
     }
+    log(options);
     const convert = spawn(cmd, options);
     if (argv.verbose > 0) {
         convert.stdout.on('data', data => process.stdout.write(data));
@@ -158,7 +159,7 @@ function buildFont(font) {
     return {
         file_name,
         file_path,
-        url: path.join(manifest.storage_prefix, 'fonts', file_name)
+        url: `${manifest.storage_prefix}/fonts/${file_name}`
     };
 }
 
@@ -290,7 +291,7 @@ function processImages(config_page, html) {
         const file_path = path.join(config_page.page_image_folder_path, file_name);
         fs.createReadStream(path.join(tmp_folder, svg))
             .pipe(fs.createWriteStream(file_path));
-        const url = path.join(manifest.storage_prefix, 'pages', config_page.id, 'images', file_name);
+        const url = `${manifest.storage_prefix}/pages/${config_page.id}/images/${file_name}`;
         return `"${url}"`;
     });
     return html;
