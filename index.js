@@ -158,7 +158,7 @@ function buildFont(font) {
     return {
         file_name,
         file_path,
-        url: path.join(manifest.prefix, 'fonts', file_name)
+        url: path.join(manifest.storage_prefix, 'fonts', file_name)
     };
 }
 
@@ -290,7 +290,7 @@ function processImages(config_page, html) {
         const file_path = path.join(config_page.page_image_folder_path, file_name);
         fs.createReadStream(path.join(tmp_folder, svg))
             .pipe(fs.createWriteStream(file_path));
-        const url = path.join(manifest.prefix, 'pages', config_page.id, 'images', file_name);
+        const url = path.join(manifest.storage_prefix, 'pages', config_page.id, 'images', file_name);
         return `"${url}"`;
     });
     return html;
