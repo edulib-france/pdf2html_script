@@ -119,10 +119,10 @@ function convertPDF(cb) {
         `--dest-dir`, tmp_folder,
         manifest.pdf_file_path
     ];
-    if (manifest.page_number !== undefined) {
+    if (manifest.page_number !== undefined && manifest.page_number !== null) {
         options = ['-f', manifest.page_number, '-l', manifest.page_number].concat(options);
     }
-    log(options);
+    log('pdf2htmlEx options:', options);
     const convert = spawn(cmd, options);
     if (argv.verbose > 0) {
         convert.stdout.on('data', data => process.stdout.write(data));
