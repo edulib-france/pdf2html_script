@@ -318,7 +318,7 @@ function buildPageCssRule(id, classes, cssrules, rule) {
     const selector = rule.selectors[0];
     const selectors = [];
     if (classes.has(selector.substring(1))) {
-        if (selector === 'pf' || selector.match(/[wh][0-9]+/g)) {
+        if (selector === 'pf' || selector.match(/[wh][0-9a-z]+/g)) {
             selectors.push(`#pf${id}${selector}`);
         }
         selectors.push(`#pf${id} ${selector}`);
