@@ -512,8 +512,8 @@ function done() {
     if (fontsDone && htmlDone) writeManifest();
 }
 
-convertPDF((err) => {
-    if (err) return error(err);
+// convertPDF((err) => {
+//     if (err) return error(err);
     processFonts().subscribe(
         fonts => {
             processHtml(fonts).then(
@@ -529,4 +529,4 @@ convertPDF((err) => {
             fontsDone = true;
             done();
         });
-});
+// });
