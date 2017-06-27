@@ -92,7 +92,7 @@ const tmp_page_folder = path.join(tmp_folder, 'pages');
 const css_filename = 'manual.css';
 const css_filepath = path.join(tmp_folder, css_filename);
 try {
-    if (fs.existsSync(tmp_folder)) rimraf.sync(tmp_folder);
+    // if (fs.existsSync(tmp_folder)) rimraf.sync(tmp_folder);
     mkdirp.sync(tmp_folder);
     mkdirp.sync(tmp_page_folder);
 } catch (err) {
@@ -253,12 +253,13 @@ function processPage(fonts, cssfile, page_file) {
         const config_page = getPageConfig(page_number);
         if (config_page instanceof InternalError) return Promise.reject(config_page);
         data = processImages(config_page, minify(data));
-        const page_id = getId(data.html);
-        log(`process page ${page_id} content`);
+        const pfdata = getPfData(data.html);
+        if (!pfdata) return Promise.reject(new InternalError('error parsing: page id not found !'));
+        log(`process page ${pfdata.id} content`);
         const html_file_path = path.join(config_page.page_folder_path, `${config_page.id}.html`);
         const classes = getClasses(data.html);
         const css_file_path = path.join(config_page.page_folder_path, `${config_page.id}.css`);
-        const styles = cleanup.minify(css.stringify(buildPageCss(fonts, cssfile, page_id, classes), cssOpts)).styles;
+        const styles = cleanup.minify(css.stringify(buildPageCss(fonts, cssfile, pfdata, classes), cssOpts)).styles;
         try {
             return Promise.all(data.promises.concat([
                 writeFile(html_file_path, data.html),
@@ -305,20 +306,24 @@ function getPageNumber(file) {
     return parseInt(file.replace(/^page-([0-9]+\.html$)/i, '$1'));
 }
 
-function getId(content) {
-    let id = content.match(/data\-page\-no="([^"]+)"/g);
-    id = id ? id[0].substring(14, id[0].length - 1) : '';
-    return id;
+const ID_REGEXP = new RegExp('<div id="[^"]+" class="([^"]+)" data\-page\-no="([^"]+)">');
+
+function getPfData(content) {
+    const match = content.match(ID_REGEXP);
+    if (!match || match.length !== 3) {
+        return null;
+    }
+    return {
+        class: match[1].split(' '),
+        id: match[2]
+    };
 }
 
 function getClasses(content) {
     const classes = new Set();
     content.match(/class="([^"]+)"/g).map(elmt => {
-        const elmts = elmt.substring(7, elmt.length - 1).split(' ');
-        elmts.map(c => {
-            if (c && c.length > 0) {
-                classes.add(c);
-            }
+        elmt.substring(7, elmt.length - 1).split(' ').map(c => {
+            if (c && c.length > 0) classes.add(c);
         });
     });
     return classes;
@@ -344,7 +349,7 @@ function processImages(config_page, html) {
     };
 }
 
-function buildPageCss(fonts, cssfile, id, classes) {
+function buildPageCss(fonts, cssfile, pfdata, classes) {
     const cssrules = {
         stylesheet: {
             rules: []
@@ -353,7 +358,7 @@ function buildPageCss(fonts, cssfile, id, classes) {
     for (let i = 0; i < cssfile.stylesheet.rules.length; ++i) {
         const rule = cssfile.stylesheet.rules[i];
         if (rule.type === 'rule' && rule.selectors.length === 1) {
-            buildPageCssRule(id, classes, cssrules, rule);
+            buildPageCssRule(pfdata, classes, cssrules, rule);
         } else if (rule.type === 'font-face') {
             buildPageCssFontFace(fonts, classes, cssrules, rule);
         }
@@ -361,14 +366,14 @@ function buildPageCss(fonts, cssfile, id, classes) {
     return cssrules;
 }
 
-function buildPageCssRule(id, classes, cssrules, rule) {
+function buildPageCssRule(pfdata, classes, cssrules, rule) {
     const selector = rule.selectors[0];
     const selectors = [];
     if (classes.has(selector.substring(1))) {
-        if (selector === 'pf' || selector.match(/[wh][0-9a-z]+/g)) {
-            selectors.push(`#pf${id}${selector}`);
+        if (pfdata.class.includes(selector.substring(1))) {
+            selectors.push(`#pf${pfdata.id}${selector}`);
         }
-        selectors.push(`#pf${id} ${selector}`);
+        selectors.push(`#pf${pfdata.id} ${selector}`);
     }
     if (selectors.length > 0) {
         const page_rule = _.cloneDeep(rule);
