@@ -1,7 +1,7 @@
 {
   "name": "pdf2html",
-  "version": "1.0.0",
-  "description": "",
+  "version": "1.0.1",
+  "description": "generate html from pdf for lib-manuels",
   "main": "index.js",
   "dependencies": {
     "clean-css": "^4.1.2",
