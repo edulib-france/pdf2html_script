@@ -34,12 +34,17 @@ const argv = require('yargs')
     .demand('input')
     .describe('test', 'generate index.html to test')
     .boolean('test')
+    .describe('folder', 'create folder destination folders')
+    .boolean('folder')
     .describe('verbose', 'activate log')
     .alias('v', 'verbose')
     .count('verbose')
     .help('h')
     .alias('h', 'help')
     .argv;
+
+const image_format = 'png';
+const start = new Date();
 
 let config;
 try {
@@ -51,8 +56,12 @@ try {
 
 // validate dest folder
 if (!fs.existsSync(config.textbook_folder_path)) {
-    console.error(`dest folder '${config.textbook_folder_path} does not exists !`);
-    process.exit(404);
+    if (argv.folder) {
+        mkdirp.sync(config.textbook_folder_path);
+    } else {
+        console.error(`dest folder '${config.textbook_folder_path} does not exists !`);
+        process.exit(404);
+    }
 }
 
 // init manifest
@@ -94,18 +103,36 @@ if (!fs.existsSync(manifest.pdf_file_path)) {
     return error(new InternalError(404, `input pdf file '${manifest.pdf_file_path} does not exists !`));
 }
 
+// validate dest pages folder
+if (!fs.existsSync(manifest.textbook_pages_folder_path)) {
+    if (argv.folder) {
+        mkdirp.sync(config.textbook_pages_folder_path);
+    } else {
+        return error(new InternalError(404, `dest pages folder '${manifest.textbook_pages_folder_path} does not exists !`));
+    }
+}
+
+// validate dest fonts folder
+if (!fs.existsSync(manifest.textbook_fonts_folder_path)) {
+    if (argv.folder) {
+        mkdirp.sync(config.textbook_fonts_folder_path);
+    } else {
+        return error(new InternalError(404, `dest fonts folder '${manifest.textbook_fonts_folder_path} does not exists !`));
+    }
+}
+
 // Run pdf2htmlEX
 function convertPDF(cb) {
     const spawn = require('child_process').spawn;
     const cmd = 'pdf2htmlEX'
     let options = [
         '--fallback', manifest.use_fallback === true ? 1 : 0,
-        '--bg-format', 'svg',
+        '--bg-format', image_format,
         '--debug', argv.verbose > 1 ? 1 : 0,
-        '--optimize-text', 1,
-        '--process-outline', 0,
-        '--process-nontext', 1,
-        '--space-as-offset', 1,
+        '--optimize-text', 1, // default 0
+        '--process-outline', 1, // default 1
+        '--process-nontext', 1, // default 1
+        '--space-as-offset', 0, // default 0
         '--embed-font', 0,
         '--embed-image', 0,
         '--embed-css', 0,
@@ -253,10 +280,18 @@ function getPageConfig(page_number) {
         return new InternalError(404, `no config found for page ${page_number}`);
     }
     if (!fs.existsSync(config_page.page_folder_path)) {
-        return new InternalError(404, `page folder '${config_page.page_folder_path} does not exists !`);
+        if (argv.folder) {
+            mkdirp.sync(config_page.page_folder_path);
+        } else {
+            return new InternalError(404, `page folder '${config_page.page_folder_path} does not exists !`);
+        }
     }
     if (!fs.existsSync(config_page.page_image_folder_path)) {
-        return new InternalError(404, `page image folder '${config_page.page_image_folder_path} does not exists !`);
+        if (argv.folder) {
+            mkdirp.sync(config_page.page_image_folder_path);
+        } else {
+            return new InternalError(404, `page image folder '${config_page.page_image_folder_path} does not exists !`);
+        }
     }
     return config_page;
 }
@@ -284,12 +319,14 @@ function getClasses(content) {
     return classes;
 }
 
+const REGEXP_IMG = new RegExp(`"([a-zA-Z0-9]+\.${image_format})"`, 'g');
 function processImages(config_page, html) {
     let index = 0;
-    html = html.replace(/"([a-zA-Z0-9]+\.svg)"/g, (match, svg) => {
-        const file_name = `${config_page.id}-${++index}.svg`;
+    // html = html.replace(/"([a-zA-Z0-9]+\.svg)"/g, (match, img) => {
+    html = html.replace(REGEXP_IMG, (match, img) => {
+        const file_name = `${config_page.id}-${++index}.${image_format}`;
         const file_path = path.join(config_page.page_image_folder_path, file_name);
-        fs.createReadStream(path.join(tmp_folder, svg))
+        fs.createReadStream(path.join(tmp_folder, img))
             .pipe(fs.createWriteStream(file_path));
         const url = `${manifest.storage_prefix}/pages/${config_page.id}/images/${file_name}`;
         return `"${url}"`;
@@ -368,8 +405,10 @@ function writeTest(pages) {
 }
 
 function writeManifest(cb) {
-    log('write manifest');
+    log('write manifest')
+    manifest.start_at = start;
     manifest.created_at = new Date();
+    manifest.process_time = `${manifest.created_at.getTime() - manifest.start_at.getTime()} ms`;
     const manifestStream = fs.createWriteStream(manifest.manifest_file_path);
     cb = cb || ((err) => {
         if (err) console.error(err);
