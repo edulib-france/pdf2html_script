@@ -92,7 +92,7 @@ const tmp_page_folder = path.join(tmp_folder, 'pages');
 const css_filename = 'manual.css';
 const css_filepath = path.join(tmp_folder, css_filename);
 try {
-    // if (fs.existsSync(tmp_folder)) rimraf.sync(tmp_folder);
+    if (fs.existsSync(tmp_folder)) rimraf.sync(tmp_folder);
     mkdirp.sync(tmp_folder);
     mkdirp.sync(tmp_page_folder);
 } catch (err) {
@@ -253,9 +253,9 @@ function processPage(fonts, cssfile, page_file) {
         const config_page = getPageConfig(page_number);
         if (config_page instanceof InternalError) return Promise.reject(config_page);
         data = processImages(config_page, minify(data));
-        const pfdata = getPfData(data.html);
+        const pfdata = getPfData(config_page, data);
         if (!pfdata) return Promise.reject(new InternalError('error parsing: page id not found !'));
-        log(`process page ${pfdata.id} content`);
+        log(`process page ${pfdata.pfid} - ${pfdata.id} content`);
         const html_file_path = path.join(config_page.page_folder_path, `${config_page.id}.html`);
         const classes = getClasses(data.html);
         const css_file_path = path.join(config_page.page_folder_path, `${config_page.id}.css`);
@@ -308,15 +308,17 @@ function getPageNumber(file) {
 
 const ID_REGEXP = new RegExp('<div id="[^"]+" class="([^"]+)" data\-page\-no="([^"]+)">');
 
-function getPfData(content) {
-    const match = content.match(ID_REGEXP);
-    if (!match || match.length !== 3) {
-        return null;
-    }
-    return {
-        class: match[1].split(' '),
-        id: match[2]
-    };
+function getPfData(config_page, data) {
+    let pfdata;
+    data.html = data.html.replace(ID_REGEXP, (match, pfclass, pfid) => {
+        pfdata = {
+            class: pfclass,
+            id: `pf-${config_page.id}`,
+            pfid
+        }
+        return `<div id="${pfdata.id}" class="${pfdata.class}" data-page-no="${pfdata.pfid}">`;
+    });
+    return pfdata;
 }
 
 function getClasses(content) {
@@ -371,9 +373,9 @@ function buildPageCssRule(pfdata, classes, cssrules, rule) {
     const selectors = [];
     if (classes.has(selector.substring(1))) {
         if (pfdata.class.includes(selector.substring(1))) {
-            selectors.push(`#pf${pfdata.id}${selector}`);
+            selectors.push(`#${pfdata.id}${selector}`);
         }
-        selectors.push(`#pf${pfdata.id} ${selector}`);
+        selectors.push(`#${pfdata.id} ${selector}`);
     }
     if (selectors.length > 0) {
         const page_rule = _.cloneDeep(rule);
