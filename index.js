@@ -163,6 +163,7 @@ function processFonts() {
     return Rx.Observable.create(function (observer) {
         const fonts = {};
         const duplicates = [];
+        manifest.font_file_paths = [];
         fs.readdir(tmp_folder, (err, files) => {
             if (err) return observer.error(err);
             const promises = [];
@@ -172,6 +173,7 @@ function processFonts() {
                 const font = buildFont(file);
                 fonts[file] = font;
                 if (fs.existsSync(font.file_path)) duplicates.push(font.file_name);
+                manifest.font_file_paths.push(font.file_path);
                 promises.push(copyFile(path.join(tmp_folder, file), font.file_path));
             });
             observer.next(fonts);
@@ -250,22 +252,24 @@ function processPage(fonts, cssfile, page_file) {
         const page_number = getPageNumber(page_file);
         const config_page = getPageConfig(page_number);
         if (config_page instanceof InternalError) return Promise.reject(config_page);
-        const html = minify(processImages(config_page, minify(data)));
-        const page_id = getId(html);
+        data = processImages(config_page, minify(data));
+        const page_id = getId(data.html);
+        log(`process page ${page_id} content`);
         const html_file_path = path.join(config_page.page_folder_path, `${config_page.id}.html`);
-        const classes = getClasses(html);
+        const classes = getClasses(data.html);
         const css_file_path = path.join(config_page.page_folder_path, `${config_page.id}.css`);
         const styles = cleanup.minify(css.stringify(buildPageCss(fonts, cssfile, page_id, classes), cssOpts)).styles;
-        log(`process page ${page_id} content`);
         try {
-            return Promise.all([
-                writeFile(html_file_path, html),
+            return Promise.all(data.promises.concat([
+                writeFile(html_file_path, data.html),
                 writeFile(css_file_path, styles)
-            ]).then(() => {
+            ])).then(() => {
                 config_page.processed = true;
+                config_page.html_file_path = html_file_path;
+                config_page.css_file_path = css_file_path;
                 return {
                     page_number,
-                    html,
+                    html: data.html,
                     css_file_path
                 };
             });
@@ -321,17 +325,23 @@ function getClasses(content) {
 }
 
 const REGEXP_IMG = new RegExp(`"([a-zA-Z0-9]+\.${image_format})"`, 'g');
+
 function processImages(config_page, html) {
     let index = 0;
+    config_page.image_file_paths = [];
+    const promises = [];
     html = html.replace(REGEXP_IMG, (match, img) => {
         const file_name = `${config_page.id}-${++index}.${image_format}`;
         const file_path = path.join(config_page.page_image_folder_path, file_name);
-        fs.createReadStream(path.join(tmp_folder, img))
-            .pipe(fs.createWriteStream(file_path));
+        config_page.image_file_paths.push(file_path);
+        promises.push(copyFile(path.join(tmp_folder, img), file_path));
         const url = `${manifest.storage_prefix}/pages/${config_page.id}/images/${file_name}`;
         return `"${url}"`;
     });
-    return html;
+    return {
+        html,
+        promises
+    };
 }
 
 function buildPageCss(fonts, cssfile, id, classes) {
@@ -477,12 +487,10 @@ function error(err) {
     } else if (err) {
         code = -1, msg = err.message;
     }
-    console.error(msg);
+    console.error(err);
     manifest.exit_code = code || -1;
     manifest.error_message = msg;
-    writeManifest(() => {
-        process.exit(code);
-    });
+    writeManifest(() => process.exit(code));
 }
 
 let fontsDone = false;
