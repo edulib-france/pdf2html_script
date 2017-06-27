@@ -1,6 +1,6 @@
 {
   "name": "pdf2html",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "generate html from pdf for lib-manuels",
   "main": "index.js",
   "dependencies": {

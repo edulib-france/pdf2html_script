@@ -66,6 +66,7 @@ if (!fs.existsSync(config.textbook_folder_path)) {
 
 // init manifest
 const manifest = _.cloneDeep(config);
+manifest.version = require(path.join(__dirname, 'package.json')).version;
 manifest.pages.forEach(page => page.processed = false);
 manifest.warnings = [];
 manifest.tmp_folder_path = path.join(manifest.textbook_folder_path, '.tmp');
