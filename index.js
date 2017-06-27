@@ -470,10 +470,15 @@ function writeFile(file_path, data) {
 function copyFile(file_path_src, file_path_dest) {
     return new Promise((resolve, reject) => {
         try {
+            const rstream = fs.createReadStream(file_path_src);
             const wstream = fs.createWriteStream(file_path_dest);
-            fs.createReadStream(file_path_src).pipe(wstream);
-            wstream.on('finish', resolve);
             wstream.on('error', reject);
+            wstream.on('finish', () => {
+                rstream.destroy();
+                wstream.end();
+                resolve();
+            });
+            rstream.pipe(wstream);
         } catch (err) {
             reject(err);
         }
