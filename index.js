@@ -322,7 +322,6 @@ function getClasses(content) {
 const REGEXP_IMG = new RegExp(`"([a-zA-Z0-9]+\.${image_format})"`, 'g');
 function processImages(config_page, html) {
     let index = 0;
-    // html = html.replace(/"([a-zA-Z0-9]+\.svg)"/g, (match, img) => {
     html = html.replace(REGEXP_IMG, (match, img) => {
         const file_name = `${config_page.id}-${++index}.${image_format}`;
         const file_path = path.join(config_page.page_image_folder_path, file_name);
