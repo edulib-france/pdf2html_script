@@ -66,6 +66,7 @@ if (!fs.existsSync(config.textbook_folder_path)) {
 
 // init manifest
 const manifest = _.cloneDeep(config);
+manifest.start_at = start;
 manifest.version = require(path.join(__dirname, 'package.json')).version;
 manifest.pages.forEach(page => page.processed = false);
 manifest.warnings = [];
@@ -166,7 +167,7 @@ function processFonts() {
         manifest.font_file_paths = [];
         fs.readdir(tmp_folder, (err, files) => {
             if (err) return observer.error(err);
-            const promises = [];
+            let promise = Promise.resolve();
             files.forEach(file => {
                 if (!file.endsWith('.woff')) return;
                 log(`process font ${file}`);
@@ -174,11 +175,11 @@ function processFonts() {
                 fonts[file] = font;
                 if (fs.existsSync(font.file_path)) duplicates.push(font.file_name);
                 manifest.font_file_paths.push(font.file_path);
-                promises.push(copyFile(path.join(tmp_folder, file), font.file_path));
+                promise = promise.then(() => copyFile(path.join(tmp_folder, file), font.file_path));
             });
             observer.next(fonts);
-            promises.push(addDup2Manifest(duplicates, fonts));
-            Promise.all(promises).then(() => observer.complete(), err => observer.error(err));
+            promise.then(() => addDup2Manifest(duplicates, fonts));
+            promise.then(() => observer.complete(), err => observer.error(err));
         });
     });
 }
@@ -240,10 +241,17 @@ function processPages(fonts, cssfile) {
             });
         }
         const pages = [];
-        const promises = [];
-        files.forEach(file => promises.push(processPage(fonts, cssfile, file)
-            .then(page => pages.push(page))));
-        return Promise.all(promises).then(() => pages);
+        let promise = Promise.resolve();
+        files.forEach(file => {
+            promise = promise.then(() => {
+                return processPage(fonts, cssfile, file)
+                    .then(page => {
+                        pages.push(page);
+                        return Promise.resolve();
+                    });
+            });
+        });
+        return promise.then(() => pages);
     });
 }
 
@@ -423,7 +431,6 @@ function writeTest(pages) {
 
 function writeManifest(cb) {
     log('write manifest')
-    manifest.start_at = start;
     manifest.created_at = new Date();
     manifest.process_time = `${manifest.created_at.getTime() - manifest.start_at.getTime()} ms`;
     const manifestStream = fs.createWriteStream(manifest.manifest_file_path);
