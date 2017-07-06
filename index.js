@@ -178,7 +178,7 @@ function processFonts() {
                 promise = promise.then(() => copyFile(path.join(tmp_folder, file), font.file_path));
             });
             observer.next(fonts);
-            promise.then(() => addDup2Manifest(duplicates, fonts));
+            promise = promise.then(() => addDup2Manifest(duplicates, fonts));
             promise.then(() => observer.complete(), err => observer.error(err));
         });
     });
@@ -260,8 +260,8 @@ function processPage(fonts, cssfile, page_file) {
         const page_number = getPageNumber(page_file);
         const config_page = getPageConfig(page_number);
         if (config_page instanceof InternalError) return Promise.reject(config_page);
-        data = processImages(config_page, minify(data));
-        const pfdata = getPfData(config_page, data);
+        data = processPageImages(config_page, minify(data));
+        const pfdata = processPageHtml(config_page, data);
         if (!pfdata) return Promise.reject(new InternalError('error parsing: page id not found !'));
         log(`process page ${pfdata.pfid} - ${pfdata.id} content`);
         const html_file_path = path.join(config_page.page_folder_path, `${config_page.id}.html`);
@@ -315,8 +315,9 @@ function getPageNumber(file) {
 }
 
 const ID_REGEXP = new RegExp('<div id="[^"]+" class="([^"]+)" data\-page\-no="([^"]+)">');
+const LINK_REGEXP = new RegExp('<a ([^>]*)>', 'g');
 
-function getPfData(config_page, data) {
+function processPageHtml(config_page, data) {
     let pfdata;
     data.html = data.html.replace(ID_REGEXP, (match, pfclass, pfid) => {
         pfdata = {
@@ -326,6 +327,7 @@ function getPfData(config_page, data) {
         }
         return `<div id="${pfdata.id}" class="${pfdata.class}" data-page-no="${pfdata.pfid}">`;
     });
+    data.html = data.html.replace(LINK_REGEXP, (match, attr) => `<a target="_blank" ${attr}>`);
     return pfdata;
 }
 
@@ -341,7 +343,7 @@ function getClasses(content) {
 
 const REGEXP_IMG = new RegExp(`"([a-zA-Z0-9]+\.${image_format})"`, 'g');
 
-function processImages(config_page, html) {
+function processPageImages(config_page, html) {
     let index = 0;
     config_page.image_file_paths = [];
     const promises = [];
