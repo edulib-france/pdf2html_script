@@ -185,9 +185,13 @@ function processFonts() {
 }
 
 function buildFont(font) {
-    const file_name = `${md5File.sync(path.join(tmp_folder, font))}.woff`;
+    const font_md5 = md5File.sync(path.join(tmp_folder, font));
+    const font_family = `${manifest.textbook_id}_${font_md5}`;
+    const file_name = `${font_md5}.woff`;
     const file_path = path.join(manifest.textbook_fonts_folder_path, file_name);
     return {
+        font_md5,
+        font_family,
         file_name,
         file_path,
         url: `${manifest.storage_prefix}/fonts/${file_name}`
@@ -370,7 +374,7 @@ function buildPageCss(fonts, cssfile, pfdata, classes) {
     for (let i = 0; i < cssfile.stylesheet.rules.length; ++i) {
         const rule = cssfile.stylesheet.rules[i];
         if (rule.type === 'rule' && rule.selectors.length === 1) {
-            buildPageCssRule(pfdata, classes, cssrules, rule);
+            buildPageCssRule(pfdata, fonts, classes, cssrules, rule);
         } else if (rule.type === 'font-face') {
             buildPageCssFontFace(fonts, classes, cssrules, rule);
         }
@@ -378,7 +382,7 @@ function buildPageCss(fonts, cssfile, pfdata, classes) {
     return cssrules;
 }
 
-function buildPageCssRule(pfdata, classes, cssrules, rule) {
+function buildPageCssRule(pfdata, fonts, classes, cssrules, rule) {
     const selector = rule.selectors[0];
     const selectors = [];
     if (classes.has(selector.substring(1))) {
@@ -386,6 +390,13 @@ function buildPageCssRule(pfdata, classes, cssrules, rule) {
             selectors.push(`#${pfdata.id}${selector}`);
         }
         selectors.push(`#${pfdata.id} ${selector}`);
+        const font_family = rule.declarations.filter(d => d.property === 'font-family')[0];
+        if (font_family) {
+            const font = fonts[`${font_family.value.substring(1)}.woff`];
+            if (font) {
+                font_family.value = font.font_family;
+            }
+        }
     }
     if (selectors.length > 0) {
         const page_rule = _.cloneDeep(rule);
@@ -395,9 +406,12 @@ function buildPageCssRule(pfdata, classes, cssrules, rule) {
 }
 
 function buildPageCssFontFace(fonts, classes, cssrules, rule) {
-    const name = rule.declarations.filter(d => d.property === 'font-family')[0].value;
-    if (classes.has(name)) {
+    let name = rule.declarations.filter(d => d.property === 'font-family')[0];
+    if (classes.has(name.value)) {
         const page_rule = _.cloneDeep(rule);
+        name = page_rule.declarations.filter(d => d.property === 'font-family')[0];
+        const font = fonts[`${name.value.substring(1)}.woff`];
+        name.value = font.font_family;
         const src = page_rule.declarations.filter(d => d.property === 'src')[0];
         src.value = src.value.replace(/url\(([^)]+)\)/i, (match, font) => {
             return `url(${fonts[font].url})`;
@@ -523,19 +537,19 @@ function done() {
 
 convertPDF((err) => {
     if (err) return error(err);
-    processFonts().subscribe(
-        fonts => {
-            processHtml(fonts).then(
-                () => {
-                    log('all html are processed');
-                    htmlDone = true;
-                    done();
-                }, err => error(err));
-        },
-        err => error(err),
-        () => {
-            log('all fonts are processed');
-            fontsDone = true;
-            done();
-        });
+processFonts().subscribe(
+    fonts => {
+        processHtml(fonts).then(
+            () => {
+                log('all html are processed');
+                htmlDone = true;
+                done();
+            }, err => error(err));
+    },
+    err => error(err),
+    () => {
+        log('all fonts are processed');
+        fontsDone = true;
+        done();
+    });
 });
