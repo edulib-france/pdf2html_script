@@ -186,7 +186,7 @@ function processFonts() {
 
 function buildFont(font) {
     const font_md5 = md5File.sync(path.join(tmp_folder, font));
-    const font_family = `${manifest.textbook_id}_${font_md5}`;
+    const font_family = `ff_${manifest.textbook_id}_${font_md5}`;
     const file_name = `${font_md5}.woff`;
     const file_path = path.join(manifest.textbook_fonts_folder_path, file_name);
     return {
