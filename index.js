@@ -131,7 +131,7 @@ function convertPDF(cb) {
         '--fallback', manifest.use_fallback === true ? 1 : 0,
         '--bg-format', image_format,
         '--debug', argv.verbose > 1 ? 1 : 0,
-        '--optimize-text', 1, // default 0
+        '--optimize-text', 0, // default 0
         '--process-outline', 1, // default 1
         '--process-nontext', 1, // default 1
         '--space-as-offset', 0, // default 0
