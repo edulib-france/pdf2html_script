@@ -10,7 +10,7 @@ echo "------------------------------"
 echo
 echo ${RESTORE}
 sudo apt-get update
-sudo apt-get install -y build-essential checkinstall git cmake
+sudo apt-get install -y build-essential checkinstall git cmake wget
 sudo apt-get install -y poppler-data autotools-dev libjpeg-dev libtiff4-dev libpng12-dev libgif-dev libxt-dev autoconf automake libtool bzip2 libxml2-dev libuninameslist-dev libspiro-dev python-dev libpango1.0-dev libcairo2-dev chrpath uuid-dev uthash-dev libopenjpeg-dev libltdl-dev
 mkdir src
 cd src/
