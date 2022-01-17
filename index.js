@@ -151,6 +151,9 @@ function convertPDF(cb) {
     if (manifest.page_number !== undefined && manifest.page_number !== null) {
         options = ['-f', manifest.page_number, '-l', manifest.page_number].concat(options);
     }
+    if (manifest.data_dir !== undefined && manifest.data_dir !== null) {
+        options = ['--data-dir', manifest.data_dir].concat(options);
+    }
     log('pdf2htmlEx options:', options);
     const convert = spawn(cmd, options);
     if (argv.verbose > 0) {
